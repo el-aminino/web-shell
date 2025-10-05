@@ -1,0 +1,387 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Web Shell - Docker Terminal</title>
+    <style>
+        /* Terminal styling */
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background-color: #1e1e1e;
+            color: #ffffff;
+            font-family: 'Courier New', Courier, monospace;
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        .header {
+            background-color: #2d2d2d;
+            padding: 10px 20px;
+            border-bottom: 1px solid #444;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .header h1 {
+            color: #4CAF50;
+            font-size: 18px;
+            font-weight: bold;
+        }
+
+        .container-info {
+            font-size: 12px;
+            color: #888;
+        }
+
+        .terminal-container {
+            height: calc(100vh - 60px);
+            padding: 20px;
+            overflow-y: auto;
+        }
+
+        .terminal {
+            background-color: #000000;
+            border: 1px solid #333;
+            border-radius: 5px;
+            padding: 15px;
+            height: 100%;
+            font-size: 14px;
+            line-height: 1.4;
+            overflow-y: auto;
+            font-family: 'Courier New', Courier, monospace;
+        }
+
+        .terminal-output {
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            margin-bottom: 10px;
+        }
+
+        .input-line {
+            display: flex;
+            align-items: center;
+            margin-top: 10px;
+        }
+
+        .prompt {
+            color: #4CAF50;
+            margin-right: 5px;
+        }
+
+        .input-field {
+            background: transparent;
+            border: none;
+            color: #ffffff;
+            font-family: 'Courier New', Courier, monospace;
+            font-size: 14px;
+            outline: none;
+            flex: 1;
+        }
+
+        .cursor {
+            display: inline-block;
+            width: 8px;
+            height: 16px;
+            background-color: #ffffff;
+            animation: blink 1s infinite;
+            margin-left: 2px;
+        }
+
+        @keyframes blink {
+            0%, 50% { opacity: 1; }
+            51%, 100% { opacity: 0; }
+        }
+
+        .status {
+            position: fixed;
+            top: 10px;
+            right: 20px;
+            padding: 5px 10px;
+            border-radius: 3px;
+            font-size: 12px;
+            z-index: 1000;
+        }
+
+        .status.connected {
+            background-color: #4CAF50;
+            color: white;
+        }
+
+        .status.disconnected {
+            background-color: #f44336;
+            color: white;
+        }
+
+        .status.connecting {
+            background-color: #ff9800;
+            color: white;
+        }
+
+        .loading {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            border: 2px solid #ffffff;
+            border-radius: 50%;
+            border-top-color: transparent;
+            animation: spin 1s linear infinite;
+            margin-right: 5px;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .error {
+            color: #ff6b6b;
+        }
+
+        .success {
+            color: #4CAF50;
+        }
+
+        .warning {
+            color: #ffa726;
+        }
+
+        .info {
+            color: #42a5f5;
+        }
+
+        /* Scrollbar styling */
+        .terminal::-webkit-scrollbar {
+            width: 8px;
+        }
+
+        .terminal::-webkit-scrollbar-track {
+            background: #1e1e1e;
+        }
+
+        .terminal::-webkit-scrollbar-thumb {
+            background: #444;
+            border-radius: 4px;
+        }
+
+        .terminal::-webkit-scrollbar-thumb:hover {
+            background: #555;
+        }
+
+        /* Responsive design */
+        @media (max-width: 768px) {
+            .header {
+                padding: 10px;
+            }
+            
+            .header h1 {
+                font-size: 16px;
+            }
+            
+            .container-info {
+                font-size: 10px;
+            }
+            
+            .terminal-container {
+                padding: 10px;
+            }
+            
+            .terminal {
+                font-size: 12px;
+                padding: 10px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>🐳 Web Shell</h1>
+        <div class="container-info">
+            <span id="container-status">Container: Loading...</span>
+        </div>
+    </div>
+
+    <div class="status connecting" id="connection-status">
+        <span class="loading"></span>Connecting...
+    </div>
+
+    <div class="terminal-container">
+        <div class="terminal" id="terminal">
+            <div class="terminal-output" id="terminal-output">
+                Initializing Web Shell...
+            </div>
+            <div class="input-line">
+                <span class="prompt">$</span>
+                <input type="text" class="input-field" id="terminal-input" placeholder="Type your command here..." autofocus>
+                <span class="cursor"></span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Include Socket.IO client -->
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+    
+    <script>
+        class WebTerminal {
+            constructor() {
+                this.socket = null;
+                this.terminalOutput = document.getElementById('terminal-output');
+                this.terminalInput = document.getElementById('terminal-input');
+                this.connectionStatus = document.getElementById('connection-status');
+                this.containerStatus = document.getElementById('container-status');
+                this.commandHistory = [];
+                this.historyIndex = -1;
+                
+                this.initializeSocket();
+                this.setupEventListeners();
+                this.loadContainerInfo();
+            }
+
+            initializeSocket() {
+                this.socket = io();
+                
+                this.socket.on('connect', () => {
+                    console.log('Connected to server');
+                    this.updateConnectionStatus('connected', 'Connected');
+                });
+
+                this.socket.on('disconnect', () => {
+                    console.log('Disconnected from server');
+                    this.updateConnectionStatus('disconnected', 'Disconnected');
+                });
+
+                this.socket.on('terminal_output', (data) => {
+                    this.appendOutput(data);
+                });
+
+                this.socket.on('connect_error', (error) => {
+                    console.error('Connection error:', error);
+                    this.updateConnectionStatus('disconnected', 'Connection Error');
+                    this.appendOutput('Connection error. Please refresh the page.\r\n', 'error');
+                });
+            }
+
+            setupEventListeners() {
+                this.terminalInput.addEventListener('keydown', (e) => {
+                    switch(e.key) {
+                        case 'Enter':
+                            e.preventDefault();
+                            this.sendCommand();
+                            break;
+                        case 'ArrowUp':
+                            e.preventDefault();
+                            this.navigateHistory(-1);
+                            break;
+                        case 'ArrowDown':
+                            e.preventDefault();
+                            this.navigateHistory(1);
+                            break;
+                        case 'Tab':
+                            e.preventDefault();
+                            // Could implement tab completion here
+                            break;
+                    }
+                });
+
+                // Auto-focus input field
+                this.terminalInput.focus();
+
+                // Handle window focus to ensure input stays focused
+                window.addEventListener('focus', () => {
+                    this.terminalInput.focus();
+                });
+            }
+
+            sendCommand() {
+                const command = this.terminalInput.value.trim();
+                
+                if (command) {
+                    // Add to history
+                    this.commandHistory.unshift(command);
+                    if (this.commandHistory.length > 100) {
+                        this.commandHistory.pop();
+                    }
+                    this.historyIndex = -1;
+
+                    // Send command to server
+                    if (this.socket && this.socket.connected) {
+                        this.socket.emit('terminal_input', { command: command });
+                    } else {
+                        this.appendOutput('Not connected to server.\r\n', 'error');
+                    }
+                }
+
+                // Clear input
+                this.terminalInput.value = '';
+            }
+
+            navigateHistory(direction) {
+                if (this.commandHistory.length === 0) return;
+
+                this.historyIndex += direction;
+                
+                if (this.historyIndex < 0) {
+                    this.historyIndex = -1;
+                    this.terminalInput.value = '';
+                } else if (this.historyIndex >= this.commandHistory.length) {
+                    this.historyIndex = this.commandHistory.length - 1;
+                }
+
+                if (this.historyIndex >= 0) {
+                    this.terminalInput.value = this.commandHistory[this.historyIndex];
+                }
+            }
+
+            appendOutput(text, className = '') {
+                const outputDiv = document.createElement('div');
+                outputDiv.className = `terminal-output ${className}`;
+                outputDiv.textContent = text;
+                
+                this.terminalOutput.appendChild(outputDiv);
+                
+                // Scroll to bottom
+                this.terminalOutput.scrollTop = this.terminalOutput.scrollHeight;
+            }
+
+            updateConnectionStatus(status, text) {
+                this.connectionStatus.className = `status ${status}`;
+                this.connectionStatus.innerHTML = status === 'connected' ? 
+                    `✓ ${text}` : 
+                    `<span class="loading"></span>${text}`;
+            }
+
+            async loadContainerInfo() {
+                try {
+                    const response = await fetch('/api/container/info');
+                    const data = await response.json();
+                    
+                    if (data.error) {
+                        this.containerStatus.textContent = 'Container: Not available';
+                        this.appendOutput(`Container Error: ${data.error}\r\n`, 'error');
+                    } else {
+                        this.containerStatus.textContent = `Container: ${data.id.substring(0, 12)}... (${data.status})`;
+                    }
+                } catch (error) {
+                    console.error('Error loading container info:', error);
+                    this.containerStatus.textContent = 'Container: Error loading info';
+                }
+            }
+        }
+
+        // Initialize the web terminal when the page loads
+        document.addEventListener('DOMContentLoaded', () => {
+            new WebTerminal();
+        });
+
+        // Handle page unload
+        window.addEventListener('beforeunload', () => {
+            // Could send a disconnect message here if needed
+        });
+    </script>
+</body>
+</html>
